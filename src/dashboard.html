@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Out-nOutage</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page:           #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6;
+    --good:           #0ca30c;
+    --critical:       #d03b3b;
+    --good-bg:        rgba(12,163,12,0.10);
+    --critical-bg:    rgba(208,59,59,0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page:           #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-1:       #3987e5;
+      --good:           #0ca30c;
+      --critical:       #e66767;
+      --good-bg:        rgba(12,163,12,0.16);
+      --critical-bg:    rgba(230,103,103,0.16);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page:           #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-1:       #3987e5;
+    --good:           #0ca30c;
+    --critical:       #e66767;
+    --good-bg:        rgba(12,163,12,0.16);
+    --critical-bg:    rgba(230,103,103,0.16);
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  body { padding: 24px; max-width: 1080px; margin: 0 auto; }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  h1 { font-size: 20px; margin: 0; font-weight: 600; }
+  .subtitle { color: var(--text-secondary); font-size: 13px; margin-top: 2px; }
+  .header-right { display: flex; align-items: center; gap: 10px; }
+
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .status-pill.up { background: var(--good-bg); color: var(--good); }
+  .status-pill.down { background: var(--critical-bg); color: var(--critical); }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+
+  .icon-btn {
+    border: 1px solid var(--border);
+    background: var(--surface-1);
+    color: var(--text-secondary);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .icon-btn:hover { color: var(--text-primary); }
+
+  .banner {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    background: var(--critical-bg);
+    color: var(--critical);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+  .banner.show { display: flex; }
+
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .tile {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .tile .label { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+  .tile .value { font-size: 22px; font-weight: 600; }
+  .tile .sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    margin-bottom: 20px;
+    overflow-x: auto;
+  }
+  .card h2 { font-size: 14px; margin: 0 0 4px; font-weight: 600; }
+  .card .card-sub { font-size: 12px; color: var(--text-muted); margin-bottom: 16px; }
+
+  .chart-wrap { position: relative; min-width: 480px; }
+  .chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 140px;
+    border-bottom: 1px solid var(--baseline);
+    padding-top: 8px;
+  }
+  .chart-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    height: 100%;
+    cursor: default;
+  }
+  .bar {
+    width: 100%;
+    max-width: 24px;
+    min-height: 2px;
+    background: var(--series-1);
+    border-radius: 4px 4px 0 0;
+  }
+  .chart-col:hover .bar { opacity: 0.8; }
+  .chart-labels {
+    display: flex;
+    gap: 4px;
+    margin-top: 6px;
+  }
+  .chart-labels span {
+    flex: 1;
+    text-align: center;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+  .tooltip {
+    position: absolute;
+    display: none;
+    pointer-events: none;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    white-space: nowrap;
+    z-index: 10;
+  }
+  .tooltip .t-day { font-weight: 600; margin-bottom: 2px; }
+  .tooltip .t-row { color: var(--text-secondary); }
+
+  table { border-collapse: collapse; width: 100%; min-width: 420px; }
+  th, td {
+    text-align: left;
+    padding: 8px 10px;
+    font-size: 13px;
+    border-bottom: 1px solid var(--gridline);
+    font-variant-numeric: tabular-nums;
+  }
+  th { color: var(--text-muted); font-weight: 500; font-size: 12px; }
+  td.empty { color: var(--text-muted); font-variant-numeric: normal; }
+  .table-scroll { max-height: 320px; overflow-y: auto; }
+
+  footer { text-align: center; color: var(--text-muted); font-size: 12px; padding: 8px 0 24px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Out-nOutage</h1>
+    <div class="subtitle" id="subtitle">Loading…</div>
+  </div>
+  <div class="header-right">
+    <span class="status-pill" id="statusPill"><span class="status-dot"></span><span id="statusLabel">…</span></span>
+    <button class="icon-btn" id="themeToggle" title="Toggle theme">◐ Theme</button>
+  </div>
+</header>
+
+<div class="banner" id="pendingBanner"></div>
+
+<div class="tiles" id="tiles">
+  <div class="tile"><div class="label">Outages today</div><div class="value" id="tileTodayCount">–</div></div>
+  <div class="tile"><div class="label">Downtime today</div><div class="value" id="tileTodayDowntime">–</div></div>
+  <div class="tile"><div class="label">Uptime this session</div><div class="value" id="tileUptimePct">–</div><div class="sub" id="tileSessionSince">–</div></div>
+  <div class="tile"><div class="label">Outages this session</div><div class="value" id="tileSessionCount">–</div></div>
+  <div class="tile"><div class="label">Longest outage (session)</div><div class="value" id="tileLongest">–</div></div>
+  <div class="tile"><div class="label">All-time outages</div><div class="value" id="tileAllCount">–</div><div class="sub" id="tileAllDowntime">–</div></div>
+</div>
+
+<div class="card">
+  <h2>Outages per day</h2>
+  <div class="card-sub">Last 14 days · bar height = outage count · hover for downtime</div>
+  <div class="chart-wrap">
+    <div class="chart" id="chart"></div>
+    <div class="chart-labels" id="chartLabels"></div>
+    <div class="tooltip" id="tooltip"></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Recent outages</h2>
+  <div class="card-sub">Most recent first</div>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Started</th><th>Ended</th><th>Length</th></tr></thead>
+      <tbody id="outageRows"></tbody>
+    </table>
+  </div>
+</div>
+
+<footer id="footer">–</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function fmtDate(iso) {
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+}
+function fmtDay(dayStr) {
+  const [, m, d] = dayStr.split('-');
+  return `${m}/${d}`;
+}
+function fmtDuration(seconds) {
+  seconds = Math.round(seconds);
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  let out = '';
+  if (h) out += h + 'h ';
+  if (m) out += m + 'm ';
+  out += s + 's';
+  return out.trim();
+}
+
+function renderChart(days) {
+  const chart = $('chart');
+  const labels = $('chartLabels');
+  const tooltip = $('tooltip');
+  chart.innerHTML = '';
+  labels.innerHTML = '';
+
+  const maxCount = Math.max(1, ...days.map(d => d.count));
+
+  days.forEach(d => {
+    const col = document.createElement('div');
+    col.className = 'chart-col';
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    const pct = Math.max(2, Math.round((d.count / maxCount) * 100));
+    bar.style.height = d.count > 0 ? pct + '%' : '2px';
+    col.appendChild(bar);
+    col.addEventListener('mouseenter', (e) => showTip(e, d));
+    col.addEventListener('mousemove', (e) => positionTip(e));
+    col.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+    chart.appendChild(col);
+
+    const label = document.createElement('span');
+    label.textContent = fmtDay(d.day);
+    labels.appendChild(label);
+  });
+
+  function showTip(e, d) {
+    tooltip.innerHTML = `<div class="t-day">${d.day}</div>` +
+      `<div class="t-row">${d.count} outage${d.count === 1 ? '' : 's'}</div>` +
+      `<div class="t-row">${fmtDuration(d.downtime)} downtime</div>`;
+    tooltip.style.display = 'block';
+    positionTip(e);
+  }
+  function positionTip(e) {
+    const wrapRect = chart.parentElement.getBoundingClientRect();
+    tooltip.style.left = (e.clientX - wrapRect.left + 12) + 'px';
+    tooltip.style.top = (e.clientY - wrapRect.top - 36) + 'px';
+  }
+}
+
+function renderTiles(data) {
+  $('tileTodayCount').textContent = data.today.count;
+  $('tileTodayDowntime').textContent = fmtDuration(data.today.total_downtime);
+  $('tileUptimePct').textContent = data.session.uptime_pct.toFixed(2) + '%';
+  $('tileSessionSince').textContent = data.session.started_at
+    ? 'since ' + fmtDate(data.session.started_at)
+    : 'monitor not started';
+  $('tileSessionCount').textContent = data.session.count;
+  $('tileLongest').textContent = data.session.longest ? fmtDuration(data.session.longest) : '–';
+  $('tileAllCount').textContent = data.all_time.count;
+  $('tileAllDowntime').textContent = fmtDuration(data.all_time.total_downtime) + ' total';
+}
+
+function renderStatus(data) {
+  const pill = $('statusPill');
+  const label = $('statusLabel');
+  const up = data.status === 'up';
+  pill.className = 'status-pill ' + (up ? 'up' : 'down');
+  label.textContent = up ? 'Connected' : 'No internet';
+
+  const banner = $('pendingBanner');
+  if (data.pending_outage) {
+    banner.classList.add('show');
+    banner.textContent = `Outage in progress — started ${fmtDate(data.pending_outage.since)} (${fmtDuration(data.pending_outage.elapsed_seconds)} so far)`;
+  } else {
+    banner.classList.remove('show');
+  }
+}
+
+function renderTable(rows) {
+  const tbody = $('outageRows');
+  tbody.innerHTML = '';
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td class="empty" colspan="3">No outages recorded yet</td></tr>';
+    return;
+  }
+  rows.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${fmtDate(r.start)}</td><td>${fmtDate(r.end)}</td><td>${r.duration_label}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+async function refresh() {
+  let data;
+  try {
+    const res = await fetch('/api/data', { cache: 'no-store' });
+    data = await res.json();
+  } catch (e) {
+    $('subtitle').textContent = 'Lost connection to local monitor server';
+    return;
+  }
+  $('subtitle').textContent = 'Updated ' + fmtDate(data.generated_at);
+  $('footer').textContent = 'Out-nOutage · local dashboard · refreshes every 5s';
+  renderStatus(data);
+  renderTiles(data);
+  renderChart(data.days);
+  renderTable(data.recent_outages);
+}
+
+$('themeToggle').addEventListener('click', () => {
+  const root = document.documentElement;
+  const current = root.getAttribute('data-theme');
+  const next = current === 'dark' ? 'light' : 'dark';
+  root.setAttribute('data-theme', next);
+  localStorage.setItem('onotheme', next);
+});
+const savedTheme = localStorage.getItem('onotheme');
+if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
