@@ -6,7 +6,7 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from src import checker, db
+from src import checker, db, netinfo
 
 LOG_PATH = Path(__file__).resolve().parent.parent / "data" / "monitor.log"
 
@@ -49,15 +49,22 @@ def run():
     logging.info("Out-nOutage monitor started (session #%s)", session_id)
 
     # Recover from a crash/reboot that happened mid-outage.
-    down_since = db.load_pending_outage()
-    if down_since:
+    pending = db.load_pending_outage()
+    if pending:
         state_up = False
+        down_since = pending["down_since"]
+        current_kind = pending["kind"]
+        current_gateway = pending["gateway_ip"]
         logging.warning(
-            "Resuming after restart: outage was already in progress since %s",
+            "Resuming after restart: outage was already in progress since %s (%s)",
             down_since.isoformat(),
+            netinfo.describe(current_kind, current_gateway),
         )
     else:
         state_up = True
+        down_since = None
+        current_kind = None
+        current_gateway = None
 
     while True:
         ok = checker.is_connected()
@@ -66,15 +73,18 @@ def run():
         if ok:
             if not state_up:
                 duration = (now - down_since).total_seconds()
-                db.record_outage(down_since, now, duration)
+                db.record_outage(down_since, now, duration, kind=current_kind, gateway_ip=current_gateway)
                 db.clear_pending_outage()
                 logging.warning(
-                    "Internet restored after %s (outage started %s)",
+                    "Internet restored after %s (outage started %s, cause: %s)",
                     format_duration(duration),
                     down_since.isoformat(timespec="seconds"),
+                    netinfo.describe(current_kind, current_gateway),
                 )
                 state_up = True
                 down_since = None
+                current_kind = None
+                current_gateway = None
             time.sleep(CHECK_INTERVAL)
         else:
             if state_up:
@@ -87,8 +97,13 @@ def run():
                 if confirmed_down:
                     state_up = False
                     down_since = now
-                    db.save_pending_outage(down_since)
-                    logging.warning("Internet outage detected starting %s", down_since.isoformat(timespec="seconds"))
+                    current_kind, current_gateway = netinfo.classify_outage()
+                    db.save_pending_outage(down_since, current_kind, current_gateway)
+                    logging.warning(
+                        "Internet outage detected starting %s (%s)",
+                        down_since.isoformat(timespec="seconds"),
+                        netinfo.describe(current_kind, current_gateway),
+                    )
                 else:
                     time.sleep(CHECK_INTERVAL)
             else:

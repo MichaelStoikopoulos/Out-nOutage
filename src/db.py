@@ -1,5 +1,6 @@
 """SQLite storage for outages and monitoring sessions."""
 
+import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -23,7 +24,9 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             start_ts TEXT NOT NULL,
             end_ts TEXT NOT NULL,
-            duration_seconds REAL NOT NULL
+            duration_seconds REAL NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'unknown',
+            gateway_ip TEXT
         )"""
     )
     conn.execute(
@@ -32,6 +35,12 @@ def init_db():
             start_ts TEXT NOT NULL
         )"""
     )
+    # Migrate databases created before the local-vs-upstream classification existed.
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(outages)")}
+    if "kind" not in cols:
+        conn.execute("ALTER TABLE outages ADD COLUMN kind TEXT NOT NULL DEFAULT 'unknown'")
+    if "gateway_ip" not in cols:
+        conn.execute("ALTER TABLE outages ADD COLUMN gateway_ip TEXT")
     conn.commit()
     conn.close()
 
@@ -55,11 +64,11 @@ def get_last_session_start():
     return datetime.fromisoformat(row[0]) if row else None
 
 
-def record_outage(start, end, duration):
+def record_outage(start, end, duration, kind="unknown", gateway_ip=None):
     conn = get_conn()
     conn.execute(
-        "INSERT INTO outages (start_ts, end_ts, duration_seconds) VALUES (?, ?, ?)",
-        (start.isoformat(timespec="seconds"), end.isoformat(timespec="seconds"), duration),
+        "INSERT INTO outages (start_ts, end_ts, duration_seconds, kind, gateway_ip) VALUES (?, ?, ?, ?, ?)",
+        (start.isoformat(timespec="seconds"), end.isoformat(timespec="seconds"), duration, kind, gateway_ip),
     )
     conn.commit()
     conn.close()
@@ -68,7 +77,7 @@ def record_outage(start, end, duration):
 def get_outages_since(dt):
     conn = get_conn()
     rows = conn.execute(
-        "SELECT start_ts, end_ts, duration_seconds FROM outages WHERE start_ts >= ? ORDER BY start_ts",
+        "SELECT start_ts, end_ts, duration_seconds, kind FROM outages WHERE start_ts >= ? ORDER BY start_ts",
         (dt.isoformat(timespec="seconds"),),
     ).fetchall()
     conn.close()
@@ -78,7 +87,7 @@ def get_outages_since(dt):
 def get_all_outages():
     conn = get_conn()
     rows = conn.execute(
-        "SELECT start_ts, end_ts, duration_seconds FROM outages ORDER BY start_ts"
+        "SELECT start_ts, end_ts, duration_seconds, kind FROM outages ORDER BY start_ts"
     ).fetchall()
     conn.close()
     return rows
@@ -98,9 +107,14 @@ def get_outages_grouped_by_day(limit_days=14):
 # --- Crash-recovery for an outage that was still in progress when the
 # monitor process died (or the machine rebooted) ---------------------------
 
-def save_pending_outage(down_since):
+def save_pending_outage(down_since, kind="unknown", gateway_ip=None):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    PENDING_PATH.write_text(down_since.isoformat(timespec="seconds"))
+    payload = {
+        "down_since": down_since.isoformat(timespec="seconds"),
+        "kind": kind,
+        "gateway_ip": gateway_ip,
+    }
+    PENDING_PATH.write_text(json.dumps(payload))
 
 
 def load_pending_outage():
@@ -109,7 +123,16 @@ def load_pending_outage():
     text = PENDING_PATH.read_text().strip()
     if not text:
         return None
-    return datetime.fromisoformat(text)
+    try:
+        payload = json.loads(text)
+        return {
+            "down_since": datetime.fromisoformat(payload["down_since"]),
+            "kind": payload.get("kind", "unknown"),
+            "gateway_ip": payload.get("gateway_ip"),
+        }
+    except (json.JSONDecodeError, KeyError, ValueError):
+        # Pending file from before this format existed (plain ISO timestamp).
+        return {"down_since": datetime.fromisoformat(text), "kind": "unknown", "gateway_ip": None}
 
 
 def clear_pending_outage():

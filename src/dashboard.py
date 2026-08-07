@@ -21,16 +21,28 @@ def _summarize(rows):
     count = len(rows)
     total = sum(r[2] for r in rows)
     longest = max((r[2] for r in rows), default=0)
-    return {"count": count, "total_downtime": total, "longest": longest}
+    kind_counts = {"local": 0, "upstream": 0, "unknown": 0}
+    for row in rows:
+        kind = row[3] if len(row) > 3 else "unknown"
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+    return {
+        "count": count,
+        "total_downtime": total,
+        "longest": longest,
+        "local_count": kind_counts["local"],
+        "upstream_count": kind_counts["upstream"],
+        "unknown_count": kind_counts["unknown"],
+    }
 
 
 def _outage_dict(row):
-    start_ts, end_ts, duration = row
+    start_ts, end_ts, duration, kind = row
     return {
         "start": start_ts,
         "end": end_ts,
         "duration_seconds": duration,
         "duration_label": format_duration(duration),
+        "kind": kind,
     }
 
 
@@ -71,8 +83,10 @@ def build_data():
         "status": "up" if up else "down",
         "pending_outage": (
             {
-                "since": pending.isoformat(timespec="seconds"),
-                "elapsed_seconds": (now - pending).total_seconds(),
+                "since": pending["down_since"].isoformat(timespec="seconds"),
+                "elapsed_seconds": (now - pending["down_since"]).total_seconds(),
+                "kind": pending["kind"],
+                "gateway_ip": pending["gateway_ip"],
             }
             if pending
             else None

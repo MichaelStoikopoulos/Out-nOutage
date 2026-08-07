@@ -18,6 +18,17 @@ duration to a local SQLite database (`data/outages.db`). If the monitor
 process itself gets killed or the machine reboots mid-outage, it picks the
 outage back up on restart instead of losing it.
 
+When an outage starts, it also checks whether your **default gateway**
+(your router) is still reachable, to tell apart two different problems:
+
+- **Local network** — the router itself doesn't respond. Likely Wi-Fi,
+  ethernet cable, or the router/modem.
+- **ISP / upstream** — the router responds fine, but nothing beyond it does.
+  Likely your internet provider's side, not your equipment.
+
+Each outage gets tagged with one of these (or "unknown" if the gateway
+couldn't be determined), shown in `report`, `status`, and the dashboard.
+
 ## Usage
 
 Run in the foreground to try it out:

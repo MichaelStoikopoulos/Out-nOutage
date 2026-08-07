@@ -20,6 +20,9 @@
     --critical:       #d03b3b;
     --good-bg:        rgba(12,163,12,0.10);
     --critical-bg:    rgba(208,59,59,0.10);
+    --kind-local:     #eb6834;
+    --kind-upstream:  #4a3aa7;
+    --kind-unknown:   #898781;
   }
   @media (prefers-color-scheme: dark) {
     :root:where(:not([data-theme="light"])) {
@@ -37,6 +40,9 @@
       --critical:       #e66767;
       --good-bg:        rgba(12,163,12,0.16);
       --critical-bg:    rgba(230,103,103,0.16);
+      --kind-local:     #d95926;
+      --kind-upstream:  #9085e9;
+      --kind-unknown:   #898781;
     }
   }
   :root[data-theme="dark"] {
@@ -54,6 +60,9 @@
     --critical:       #e66767;
     --good-bg:        rgba(12,163,12,0.16);
     --critical-bg:    rgba(230,103,103,0.16);
+    --kind-local:     #d95926;
+    --kind-upstream:  #9085e9;
+    --kind-unknown:   #898781;
   }
 
   * { box-sizing: border-box; }
@@ -195,7 +204,20 @@
   .tooltip .t-day { font-weight: 600; margin-bottom: 2px; }
   .tooltip .t-row { color: var(--text-secondary); }
 
-  table { border-collapse: collapse; width: 100%; min-width: 420px; }
+  .kind-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+  .kind-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .kind-dot.local { background: var(--kind-local); }
+  .kind-dot.upstream { background: var(--kind-upstream); }
+  .kind-dot.unknown { background: var(--kind-unknown); }
+
+  table { border-collapse: collapse; width: 100%; min-width: 560px; }
   th, td {
     text-align: left;
     padding: 8px 10px;
@@ -226,12 +248,12 @@
 <div class="banner" id="pendingBanner"></div>
 
 <div class="tiles" id="tiles">
-  <div class="tile"><div class="label">Outages today</div><div class="value" id="tileTodayCount">–</div></div>
+  <div class="tile"><div class="label">Outages today</div><div class="value" id="tileTodayCount">–</div><div class="sub" id="tileTodayKinds">–</div></div>
   <div class="tile"><div class="label">Downtime today</div><div class="value" id="tileTodayDowntime">–</div></div>
   <div class="tile"><div class="label">Uptime this session</div><div class="value" id="tileUptimePct">–</div><div class="sub" id="tileSessionSince">–</div></div>
   <div class="tile"><div class="label">Outages this session</div><div class="value" id="tileSessionCount">–</div></div>
   <div class="tile"><div class="label">Longest outage (session)</div><div class="value" id="tileLongest">–</div></div>
-  <div class="tile"><div class="label">All-time outages</div><div class="value" id="tileAllCount">–</div><div class="sub" id="tileAllDowntime">–</div></div>
+  <div class="tile"><div class="label">All-time outages</div><div class="value" id="tileAllCount">–</div><div class="sub" id="tileAllKinds">–</div></div>
 </div>
 
 <div class="card">
@@ -249,7 +271,7 @@
   <div class="card-sub">Most recent first</div>
   <div class="table-scroll">
     <table>
-      <thead><tr><th>Started</th><th>Ended</th><th>Length</th></tr></thead>
+      <thead><tr><th>Started</th><th>Ended</th><th>Length</th><th>Likely cause</th></tr></thead>
       <tbody id="outageRows"></tbody>
     </table>
   </div>
@@ -321,8 +343,19 @@ function renderChart(days) {
   }
 }
 
+const KIND_LABELS = { local: 'local network', upstream: 'ISP / upstream', unknown: 'unknown cause' };
+function kindLabel(kind) { return KIND_LABELS[kind] || 'unknown cause'; }
+function kindBadge(kind) {
+  return `<span class="kind-badge"><span class="kind-dot ${kind}"></span>${kindLabel(kind)}</span>`;
+}
+function kindBreakdown(summary) {
+  if (!summary.count) return 'none yet';
+  return `${summary.local_count} local · ${summary.upstream_count} ISP · ${summary.unknown_count} unknown`;
+}
+
 function renderTiles(data) {
   $('tileTodayCount').textContent = data.today.count;
+  $('tileTodayKinds').textContent = kindBreakdown(data.today);
   $('tileTodayDowntime').textContent = fmtDuration(data.today.total_downtime);
   $('tileUptimePct').textContent = data.session.uptime_pct.toFixed(2) + '%';
   $('tileSessionSince').textContent = data.session.started_at
@@ -331,7 +364,7 @@ function renderTiles(data) {
   $('tileSessionCount').textContent = data.session.count;
   $('tileLongest').textContent = data.session.longest ? fmtDuration(data.session.longest) : '–';
   $('tileAllCount').textContent = data.all_time.count;
-  $('tileAllDowntime').textContent = fmtDuration(data.all_time.total_downtime) + ' total';
+  $('tileAllKinds').textContent = kindBreakdown(data.all_time);
 }
 
 function renderStatus(data) {
@@ -344,7 +377,8 @@ function renderStatus(data) {
   const banner = $('pendingBanner');
   if (data.pending_outage) {
     banner.classList.add('show');
-    banner.textContent = `Outage in progress — started ${fmtDate(data.pending_outage.since)} (${fmtDuration(data.pending_outage.elapsed_seconds)} so far)`;
+    banner.textContent = `Outage in progress — started ${fmtDate(data.pending_outage.since)} ` +
+      `(${fmtDuration(data.pending_outage.elapsed_seconds)} so far) — ${kindLabel(data.pending_outage.kind)}`;
   } else {
     banner.classList.remove('show');
   }
@@ -354,12 +388,12 @@ function renderTable(rows) {
   const tbody = $('outageRows');
   tbody.innerHTML = '';
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td class="empty" colspan="3">No outages recorded yet</td></tr>';
+    tbody.innerHTML = '<tr><td class="empty" colspan="4">No outages recorded yet</td></tr>';
     return;
   }
   rows.forEach(r => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${fmtDate(r.start)}</td><td>${fmtDate(r.end)}</td><td>${r.duration_label}</td>`;
+    tr.innerHTML = `<td>${fmtDate(r.start)}</td><td>${fmtDate(r.end)}</td><td>${r.duration_label}</td><td>${kindBadge(r.kind)}</td>`;
     tbody.appendChild(tr);
   });
 }
